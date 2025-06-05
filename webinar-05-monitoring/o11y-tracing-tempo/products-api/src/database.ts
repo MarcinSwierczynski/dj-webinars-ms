@@ -61,6 +61,28 @@ export async function getProductById(id: number): Promise<Product | undefined> {
   });
 }
 
+// Function to delete a product by ID with OpenTelemetry tracing
+export async function deleteProduct(id: number): Promise<void> {
+  const tracer = trace.getTracer('products-service');
+  return tracer.startActiveSpan('database.deleteProduct', async (span: Span) => {
+    try {
+      span.setAttribute('db.product_id', id);
+      const result: QueryResult = await pool.query('DELETE FROM products WHERE id = $1', [id]);
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.setAttribute('db.rows_deleted', result.rowCount);
+    } catch (error: any) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: error.message
+      });
+      span.recordException(error);
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+
 // Function to create a new product with OpenTelemetry tracing
 export async function createProduct({ name, price }: { name: string; price: number }): Promise<Product> {
   const tracer = trace.getTracer('products-service');

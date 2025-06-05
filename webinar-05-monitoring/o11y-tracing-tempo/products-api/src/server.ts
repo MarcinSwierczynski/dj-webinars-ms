@@ -7,15 +7,19 @@ initializeTracing();
 
 import express, { Request, Response, NextFunction } from 'express';
 import bodyParser from 'body-parser';
-import { getProducts, getProductById, createProduct, Product } from './database';
+import { getProducts, getProductById, createProduct, deleteProduct, Product } from './database';
 import { trace } from '@opentelemetry/api';
 import axios from 'axios';
 import logger from './logger';
 import { assertEnvVars } from './env';
+import * as promClient from 'prom-client';
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 const availabilityApiUrl = `${process.env.AVAILABILITY_API_URL}/availability`;
+
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
 
 assertEnvVars(
   'NODE_APP_PORT',
@@ -45,6 +49,33 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   });
   
   next();
+});
+
+const HTTPRequestTotalCounter = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'path', 'status'],
+});
+register.registerMetric(HTTPRequestTotalCounter);
+
+// HTTP request counter middleware gets executed after all routes
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    console.log("Logging HTTPRequestTotalCounter");
+    HTTPRequestTotalCounter.inc({
+      method: req.method,
+      path: req.path,
+      status: res.statusCode
+    });
+  });
+  next();
+});
+
+
+// /metrics endpoint
+app.get('/metrics', async (req: Request, res: Response) => {
+  res.setHeader('Content-Type', register.contentType);
+  res.send(await register.metrics());
 });
 
 // Health check endpoint
@@ -105,6 +136,26 @@ app.get('/products/:id', async (req: Request, res: Response): Promise<void> => {
   } catch (error: any) {
     logger.error(`Error fetching product ${req.params.id}:`, { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Failed to fetch product' });
+  }
+});
+
+// Delete product by ID
+app.delete('/products/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    logger.info(`Deleting product with ID: ${req.params.id}`);
+    const id = Number(req.params.id);
+    if (isNaN(id)) {
+      logger.warn('Invalid product ID', { id: req.params.id });
+      res.status(400).json({ error: 'Invalid product ID' });
+      return;
+    }
+    await deleteProduct(id);
+
+    logger.info(`Product deleted successfully: ${req.params.id}`);
+    res.status(204).send();
+  } catch (error: any) {
+    logger.error(`Error deleting product ${req.params.id}:`, { error: error.message, stack: error.stack });
+    res.status(500).json({ error: 'Failed to delete product' });
   }
 });
 

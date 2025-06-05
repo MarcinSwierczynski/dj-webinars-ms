@@ -16,3 +16,8 @@ scrape_configs:
     static_configs:
       - targets: ['tempo:3200']
     metrics_path: /metrics-generator/metrics
+
+  - job_name: 'products-api'
+    static_configs:
+      - targets: ['products-api:3000']
+    metrics_path: /metrics
